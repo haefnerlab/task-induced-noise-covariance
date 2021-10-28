@@ -1,4 +1,4 @@
-save_file = 'Haefner2016.mat';
+save_file = 'Haefner2016_static.mat';
 data = load(save_file, 'Projection');
 projective_fields = data.Projection.G;
 
