@@ -12,6 +12,7 @@ p.addParameter('n_plot_s', 11); % 1st plot panel: how many values of s to show
 p.addParameter('n_contours', 20); % 2nd and 3rd plot panel: how many sampled likelihoods/posteriors to show
 p.addParameter('analyze_every', 100); % Do dp/ds analysis on iterations (1+k*analyze_every), and final iteration
 p.addParameter('symmetry', true); % whether to enforce rotational symmetries of prior and dp/ds (makes it look nicer and reduces noise in plots)
+p.addParameter('varplot', 'bar'); % or 'lines'
 p.addParameter('savedir', '.');
 p.addParameter('verbose', false);
 p.addParameter('debug_plot', false);
@@ -114,7 +115,7 @@ else
         if args.verbose
             fprintf('Learning itr %03d\tTVD change in prior = %f\n', itr-1, delta);
         end
-
+        
         if delta < args.eps
             if args.verbose
                 fprintf('Breaking after %d learning iterations\n', itr-1);
@@ -124,7 +125,7 @@ else
             break
         end
     end
-        
+    
     if args.debug_plot
         figure;
         for i=1:length(log_priors_history)
@@ -180,7 +181,7 @@ else
             fprintf('variance itr %03d\tvar = %f\tdp/ds var = %f\tfrac var = %f\n', itr_history(i), total_variance(i), var_along_dpds(i), var_along_dpds(i)/total_variance(i));
         end
     end
-            
+    
     %% Cache all workspace variables to a file
     clear posterior_instances;
     save(save_file);
@@ -225,7 +226,7 @@ if args.debug_plot
         legend({'\lambda_i/total var', 'dot(e_i,dp/ds)'}, 'location', 'best');
         xlim([1 max_idx]);
         axis square;
-
+        
         for j=1:max_idx
             subplot(1, max_idx+1, j+1);
             range = max(abs(v(:,j)));
@@ -305,17 +306,24 @@ axis square;
 title('Derivative dp/ds');
 
 ax = subplot(2,3,6); hold on;
-yyaxis left;
-plot(ax, itr_history, var_along_dpds, 'displayname', 'var along dp/ds');
-plot(ax, itr_history, total_variance, 'displayname', 'total var');
-ylim([0 inf]);
-ylabel('total variance');
-yyaxis right;
-plot(ax, itr_history, var_along_dpds ./ total_variance, 'displayname', 'frac var along dp/ds');
-ylim([0 inf]);
-ylabel({'fraction of variance', 'in dp/ds direction'});
-xlabel('learning iteration');
-legend('location', 'best')
+switch lower(args.varplot)
+    case 'lines'
+        yyaxis left;
+        plot(ax, itr_history, var_along_dpds, 'displayname', 'var along dp/ds');
+        plot(ax, itr_history, total_variance, 'displayname', 'total var');
+        ylim([0 inf]);
+        ylabel('total variance');
+        yyaxis right;
+        plot(ax, itr_history, var_along_dpds ./ total_variance, 'displayname', 'frac var along dp/ds');
+        ylim([0 inf]);
+        ylabel({'fraction of variance', 'in dp/ds direction'});
+        xlabel('learning iteration');
+        legend('location', 'best')
+    case 'bar'
+        bar(var_along_dpds([1 end]) ./ total_variance([1 end]));
+        set(gca, 'xtick', [1 2], 'xticklabel', {'before learning', 'after learning'});
+        title('frac. var. along dp/ds');
+end
 end
 
 %% Helpers
