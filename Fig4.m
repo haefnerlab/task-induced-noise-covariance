@@ -187,6 +187,59 @@ else
     save(save_file);
 end
 
+%% (Debugging) marginal likelihood plots
+if args.debug_plot
+    marginal_s_values = linspace(-3,3,300);
+    if strcmpi(args.expt, 'SHIFT')
+        demo_x = [-1  0  1 -1 0 1 -1 0 1]*2;
+        demo_y = [-1 -1 -1  0 0 0  1 1 1]*2;
+    else
+        % randomize xy points since there are so many symmetries (quasi-random grid)
+        demo_x = linspace(-2, 2, 9);
+        demo_y = demo_x(randperm(9));
+    end
+    s_given_x_table = likelihood(xx, yy, rand_mean_fn, rand_cov_fn, marginal_s_values, 100);
+    figure();
+    subplot(1,3,1); hold on;
+    colors = hsv(length(demo_x));
+    for i=1:length(demo_x)
+        plot(demo_x(i), demo_y(i), 'o', 'color', colors(i,:), 'markerfacecolor', colors(i,:));
+    end
+    xlim([min(xx(:)), max(xx(:))]); ylim([min(yy(:)), max(yy(:))]);
+    if strcmpi(args.expt, 'SHIFT')
+        uistack(plot(xvalues, (xvalues(:)+xvalues(:).^3)/10, '-k'), 'bottom');
+    end
+    axis square;
+    title('values of x in the second subplot');
+    subplot(1,3,2); hold on;
+    for i=1:length(demo_x)
+        plot(marginal_s_values, likelihood(demo_x(i), demo_y(i), rand_mean_fn, rand_cov_fn, marginal_s_values, 100), 'color', colors(i,:));
+    end
+    title('p(s|x) for different values of x');
+    subplot(1,3,3); hold on;
+    for i=1:length(log_priors_history)
+        prior_x = exp(log_priors_history{i} - logsumexp(log_priors_history{i}));
+        marginal_s = s_given_x_table * prior_x(:);
+        plot(marginal_s_values, marginal_s, 'displayname', sprintf('itr %d', itr_history(i)));
+    end
+    title('marginal p_b(s) over learning');
+    legend();
+end
+%% (Debugging) visualize generative model stuff
+if args.debug_plot
+    mean_s_given_x = sum(marginal_s_values(:) .* s_given_x_table);
+    var_s_given_x = sum((marginal_s_values(:) - mean_s_given_x).^2 .* s_given_x_table);
+    figure();
+    subplot(1,2,1);
+    contourf(xx,yy,reshape(mean_s_given_x,size(xx)),20);
+    axis square;
+    title('mean of s|x');
+    subplot(1,2,2);
+    contourf(xx,yy,reshape(var_s_given_x,size(xx)),20);
+    axis square;
+    title('variance of s|x');
+end
+
 %% (Debugging) mutual information plots
 if args.debug_plot
     for i=length(log_priors_history):-1:1
@@ -429,4 +482,19 @@ logp = logp - logsumexp(logp);
 plogp = -exp(logp(:)).*logp(:);
 plogp(isnan(plogp) | isinf(plogp) | plogp<0) = 0;
 h = sum(plogp);
+end
+
+function p_s_given_x = likelihood(x, y, lh_fn_mu, lh_fn_cov, s_values, n_noise)
+p_s_given_x = zeros(numel(s_values), numel(x));
+for i=1:numel(s_values)
+    avg_s_x = zeros(size(x));
+    for j=1:n_noise
+        this_unnorm_loglike = logmvnpdf(x, y, lh_fn_mu(s_values(i),1), lh_fn_cov(s_values(i),1));
+        avg_s_x = avg_s_x + exp(this_unnorm_loglike);
+    end
+    % Populate this row (this value of s) in the joint probability table
+    p_s_given_x(i, :) = avg_s_x(:);
+end
+% Normalize each column so that p(s|x) sums to 1 for each x
+p_s_given_x = p_s_given_x ./ sum(p_s_given_x, 1);
 end
