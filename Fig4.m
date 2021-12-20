@@ -2,15 +2,15 @@ function fig = Fig4(varargin)
 p = inputParser;
 p.addRequired('expt');  % experiment - one of 'shift' or 'covariance'
 p.addParameter('sd', 15647841);  % random seed chosen by keyboard-mashing
-p.addParameter('eps', 0.001); % stop learning when TVD(prior_t,prior_t-1) < eps
+p.addParameter('eps', 5e-4); % stop learning when TVD(prior_t,prior_t-1) < eps
 p.addParameter('max_iterations', 1000); % ...or stop when max is hit
-p.addParameter('samples_per_learning_iteration', 500); % number of posteriors per update
-p.addParameter('lambda', 0.1); % how much we care about limiting distance from uniform
+p.addParameter('n_marginal_s', 200); % resolution of p(s) which we are trying to match
 p.addParameter('samples_per_derivative', 1000); % number of noise draws to estimate dp/ds
 p.addParameter('variance_samples', 2000); % number of noise draws to estimate %variance
 p.addParameter('n_plot_s', 11); % 1st plot panel: how many values of s to show
 p.addParameter('n_contours', 20); % 2nd and 3rd plot panel: how many sampled likelihoods/posteriors to show
-p.addParameter('analyze_every', 100); % Do dp/ds analysis on iterations (1+k*analyze_every), and final iteration
+p.addParameter('analyze_every', 10); % Do dp/ds analysis on iterations (1+k*analyze_every), and final iteration
+p.addParameter('lr', 0.01); % (constant) learning rate
 p.addParameter('symmetry', true); % whether to enforce rotational symmetries of prior and dp/ds (makes it look nicer and reduces noise in plots)
 p.addParameter('varplot', 'bar'); % or 'lines'
 p.addParameter('savedir', '.');
@@ -24,7 +24,7 @@ cov_noise_factor = 1/10;
 mu_noise_factor = 1/10;
 
 rng(args.sd, 'twister');
-sd_sequence = randi(2^31, args.max_iterations+1, 3);
+sd_sequence = randi(2^31, args.max_iterations+1, 2);
 
 xvalues = linspace(-3, 3, 51);
 [xx, yy] = meshgrid(xvalues);
@@ -36,22 +36,56 @@ switch upper(args.expt)
         % Parameterize how the mean of the likelihood depends on s (cubic, plus noise)
         rand_mean_fn = @(s, noise) [s(:), (s(:)+s(:).^3)/10] + randn(1,2)*noise*mu_noise_factor;
         % Parameterize how the covariance of the likelihood depends on s (constant plus noise)
-        rand_cov_fn = @(s, noise) eye(2) + randcov(2)*noise*cov_noise_factor;
+        rand_cov_fn = @(s, noise) 0.5*eye(2) + randcov(2)*noise*cov_noise_factor;
         
         prior_symmetry = @(p) (p + rot90(p,2))/2;
         dp_ds_symmetry = @(dpds) (dpds - rot90(dpds,2))/2;
+        
+        % Create true p(s) as a uniform distribution on [-3,3]
+        marginal_s_values = linspace(-3, 3, args.n_marginal_s);
+        true_marginal_s = normpdf(marginal_s_values);
+        true_marginal_s = true_marginal_s / sum(true_marginal_s);
     case 'COVARIANCE'
         % Parameterize how the mean of the likelihood depends on s (constant plus noise)
         rand_mean_fn = @(s, noise) [0 0] + randn(1,2)*noise*mu_noise_factor;
         % Parameterize how the covariance of the likelihood depends on s (transition from + to - corr, plus noise)
         max_correlation = .9;
         covplus = 1.5*[1 max_correlation; max_correlation 1];
-        covzero = eye(2);
+        covzero = 0.5*eye(2);
         covminus = 1.5*[1 -max_correlation; -max_correlation 1];
         rand_cov_fn = @(s, noise) covzero + (s>0)*(covplus-covzero)*tanh(s) + (s<0)*(covminus-covzero)*abs(tanh(s)) + randcov(2)*noise*cov_noise_factor;
         
         prior_symmetry = @(p) (p + rot90(p,1) + rot90(p,2) + rot90(p,3))/4;
         dp_ds_symmetry = @(dpds) (dpds - rot90(dpds,1) + rot90(dpds,2) - rot90(dpds,3))/4;
+        
+        % Create true p(s) proportional to a normal distribution on [-3,3]
+        marginal_s_values = linspace(-3, 3, args.n_marginal_s);
+        true_marginal_s = normpdf(marginal_s_values);
+        true_marginal_s = true_marginal_s / sum(true_marginal_s);
+    case 'ROT-SHIFT'
+        % Parameterize how the mean of the likelihood depends on s (around a ring, plus noise)
+        rand_mean_fn = @(s, noise) 1.5*[cos(pi*s), sin(pi*s)] + randn(1,2)*noise*mu_noise_factor;
+        % Parameterize how the covariance of the likelihood depends on s (constant plus noise)
+        rand_cov_fn = @(s, noise) 0.5*eye(2) + randcov(2)*noise*cov_noise_factor;
+        
+        prior_symmetry = @(p) (p + rot90(p,1) + rot90(p,2) + rot90(p,3))/4;
+        dp_ds_symmetry = @(dpds) (dpds - flipud(dpds))/2;
+        
+        % Create true p(s) uniform on [-1,1]
+        marginal_s_values = linspace(-1, 1, args.n_marginal_s);
+        true_marginal_s = ones(size(marginal_s_values))/args.n_marginal_s;
+    case 'ROT-COVARIANCE'
+        % Parameterize how the mean of the likelihood depends on s (constant plus noise)
+        rand_mean_fn = @(s, noise) [0 0] + randn(1,2)*noise*mu_noise_factor;
+        % Parameterize how the covariance of the likelihood depends on s (elongated, pointing to s along the ring)
+        rand_cov_fn = @(s, noise) rot(pi/2*s)'*[2 0; 0 0.25]*rot(pi/2*s) + randcov(2)*noise*cov_noise_factor;
+        
+        prior_symmetry = @(p) (p + rot90(p,1) + rot90(p,2) + rot90(p,3))/4;
+        dp_ds_symmetry = @(dpds) (dpds - flipud(dpds))/2;
+        
+        % Create true p(s) uniform on [-1,1]
+        marginal_s_values = linspace(-1, 1, args.n_marginal_s);
+        true_marginal_s = ones(size(marginal_s_values))/args.n_marginal_s;
     otherwise
         error('Need EXPERIMENT to be ''SHIFT'' or ''COVARIANCE''.');
 end
@@ -59,79 +93,84 @@ end
 if args.debug_plot
     figure;
     ax = gca;
+    n_vis = 20;
     % green --> orange fade
-    s_colors = [linspace(0, 1, 100); linspace(.8, .64, 100); zeros(1, 100)]';
-    s_values = linspace(-3, 3, 100);
+    s_colors = [linspace(0, 1, n_vis); linspace(.8, .64, n_vis); zeros(1, n_vis)]';
+    idx = round(linspace(1, args.n_marginal_s, n_vis+2));
+    s_values = marginal_s_values(idx(2:end-1));
     hold on;
-    for i=1:100
-        log_like = logmvnpdf(xx, yy, rand_mean_fn(s_values(i), 1), rand_cov_fn(s_values(i), 1));
+    for i=1:n_vis
+        log_like = logmvnpdf(xx, yy, rand_mean_fn(s_values(i), 0), rand_cov_fn(s_values(i), 0));
         mycontour(ax, xx, yy, log2prob(log_like), 1, '-', s_colors(i,:));
     end
     if strcmpi(args.expt, 'SHIFT')
         % Underlay the cubic mean function
-        uistack(plot(ax, xvalues, (xvalues(:)+xvalues(:).^3)/10, '-k'), 'bottom');
+        uistack(plot(marginal_s_values, (marginal_s_values(:)+marginal_s_values(:).^3)/10, '-k'), 'bottom');
     end
     xlim(ax, [min(xvalues) max(xvalues)]);
     ylim(ax, [min(xvalues) max(xvalues)]);
     axis square;
-    title('Parameterization w/ noise');
+    title('Parameterization w/out noise');
 end
 
 %% Run analysis or load from file if available
-save_file = fullfile(args.savedir, sprintf('Fig4_%s_%d_%.2f.mat', lower(args.expt), args.sd, args.lambda));
+save_file = fullfile(args.savedir, sprintf('Fig4_%s.mat', lower(args.expt)));
 if exist(save_file, 'file')
     data = load(save_file);
-    log_priors_history = data.log_priors_history;
+    priors_history = data.priors_history;
     itr_history = data.itr_history;
     dp_ds = data.dp_ds;
     total_variance = data.total_variance;
     var_along_dpds = data.var_along_dpds;
     mass_covariance = data.mass_covariance;
+    s_given_x_table = data.s_given_x_table;
     if args.verbose
-        fprintf('Loaded precomputed results from %s with %d learning iteratinos\n', save_file, max(itr_history));
+        fprintf('Loaded precomputed results from %s with %d learning iterations\n', save_file, max(itr_history));
     end
 else
-    %% Iterate learning
-    log_prior = -log(numel(xx)) * ones(size(xx));
-    log_priors_history = {};
+    %% Iterate learning by moving the prior such that the marginal likelihood gets closer to the true p(s)
+    % Initialize prior on x to uniform
+    prior = ones(size(xx)) / numel(xx);
+    priors_history = {};
     itr_history = [];
+    if args.verbose, fprintf('Precomputing s|x table...\n'); end
+    s_given_x_table = likelihood(xx, yy, rand_mean_fn, rand_cov_fn, marginal_s_values, 1000);
     for itr=1:args.max_iterations+1
-        if mod(itr, args.analyze_every) == 1
-            log_priors_history{end+1} = log_prior; %#OK<AGROW>
+        if mod(itr-1, args.analyze_every) == 0
+            priors_history{end+1} = prior;
             itr_history(end+1) = itr-1;
         end
         
-        last_log_prior = log_prior;
-        
-        rng(sd_sequence(itr, 1), 'twister');
-        s_values = linspace(-3, 3, args.samples_per_learning_iteration);  % Use a linspace grid to integrate over uniform p(s)
-        [log_prior, ~] = learning_step(xx, yy, rand_mean_fn, rand_cov_fn, log_prior, s_values, args.lambda, 0.1);
+        [err, prior] = learning_step(s_given_x_table, prior, true_marginal_s, args.lr);
         
         if args.symmetry
-            log_prior = prior_symmetry(log_prior);
+            prior = prior_symmetry(prior);
         end
         
-        delta = tvd(last_log_prior, log_prior);
-        if args.verbose
-            fprintf('Learning itr %03d\tTVD change in prior = %f\n', itr-1, delta);
-        end
-        
-        if delta < args.eps
+        if itr >= 2
+            delta = tvd(last_prior, prior);
             if args.verbose
-                fprintf('Breaking after %d learning iterations\n', itr-1);
+                fprintf('Learning itr %03d\tERR = %f\tTVD change in prior = %f\n', itr-1, err, delta);
             end
-            log_priors_history{end+1} = log_prior;
-            itr_history(end+1) = itr;
-            break
+            
+            if delta < args.eps
+                if args.verbose
+                    fprintf('Breaking after %d learning iterations\n', itr-1);
+                end
+                priors_history{end+1} = prior;
+                itr_history(end+1) = itr;
+                break
+            end
         end
+        last_prior = prior;
     end
     
     if args.debug_plot
         figure;
-        for i=1:length(log_priors_history)
-            subplotsquare(length(log_priors_history), i);
-            imagesc(log2prob(log_priors_history{i}));
-            axis image;
+        for i=1:length(priors_history)
+            subplotsquare(length(priors_history), i);
+            contourf(xx, yy, priors_history{i}, 20);
+            axis square;
             xticks([]); yticks([]);
         end
     end
@@ -140,9 +179,9 @@ else
     end
     
     %% Estimate E_{noise}[dp/ds] at s=0, once for each learning iteration
-    for i=length(log_priors_history):-1:1
-        rng(sd_sequence(itr_history(i)+1, 2), 'twister');
-        dp_ds{i} = estimate_dp_ds(xx, yy, rand_mean_fn, rand_cov_fn, log_priors_history{i}, args.samples_per_derivative);
+    for i=length(priors_history):-1:1
+        rng(sd_sequence(itr_history(i)+1, 1), 'twister');
+        dp_ds{i} = estimate_dp_ds(xx, yy, rand_mean_fn, rand_cov_fn, priors_history{i}, args.samples_per_derivative);
         
         if args.symmetry
             dp_ds{i} = dp_ds_symmetry(dp_ds{i});
@@ -153,18 +192,19 @@ else
         end
         
         if args.debug_plot
-            subplot(floor(sqrt(length(log_priors_history)+1)), ceil((length(log_priors_history)+1)/floor(sqrt(length(log_priors_history)+1))), i);
-            imagesc(dp_ds{i});
-            axis image;
+            subplotsquare(length(priors_history), i);
+            contourf(xx, yy, dp_ds{i}, 20);
+            axis square;
+            xticks([]); yticks([]);
             drawnow;
         end
     end
     
     %% Estimate total variance and variance in dp/ds direction after each iteration
-    for i=length(log_priors_history):-1:1
+    for i=length(priors_history):-1:1
         rng(sd_sequence(itr_history(i)+1, 2), 'twister');
         posterior_instances = zeros(args.variance_samples, numel(xx));
-        log_pri = log_priors_history{i};
+        log_pri = log(priors_history{i});
         parfor j=1:args.variance_samples
             % New random posterior at s=0 using prior at iteration itr.
             rand_log_post = log_pri + logmvnpdf(xx, yy, rand_mean_fn(0, 1), rand_cov_fn(0, 1));
@@ -189,7 +229,6 @@ end
 
 %% (Debugging) marginal likelihood plots
 if args.debug_plot
-    marginal_s_values = linspace(-3,3,300);
     if strcmpi(args.expt, 'SHIFT')
         demo_x = [-1  0  1 -1 0 1 -1 0 1]*2;
         demo_y = [-1 -1 -1  0 0 0  1 1 1]*2;
@@ -198,7 +237,6 @@ if args.debug_plot
         demo_x = linspace(-2, 2, 9);
         demo_y = demo_x(randperm(9));
     end
-    s_given_x_table = likelihood(xx, yy, rand_mean_fn, rand_cov_fn, marginal_s_values, 100);
     figure();
     subplot(1,3,1); hold on;
     colors = hsv(length(demo_x));
@@ -207,7 +245,7 @@ if args.debug_plot
     end
     xlim([min(xx(:)), max(xx(:))]); ylim([min(yy(:)), max(yy(:))]);
     if strcmpi(args.expt, 'SHIFT')
-        uistack(plot(xvalues, (xvalues(:)+xvalues(:).^3)/10, '-k'), 'bottom');
+        uistack(plot(marginal_s_values, (marginal_s_values(:)+marginal_s_values(:).^3)/10, '-k'), 'bottom');
     end
     axis square;
     title('values of x in the second subplot');
@@ -217,9 +255,9 @@ if args.debug_plot
     end
     title('p(s|x) for different values of x');
     subplot(1,3,3); hold on;
-    for i=1:length(log_priors_history)
-        prior_x = exp(log_priors_history{i} - logsumexp(log_priors_history{i}));
-        marginal_s = s_given_x_table * prior_x(:);
+    plot(marginal_s_values, true_marginal_s, '-k', 'displayname', 'true');
+    for i=1:length(priors_history)
+        marginal_s = s_given_x_table * priors_history{i}(:);
         plot(marginal_s_values, marginal_s, 'displayname', sprintf('itr %d', itr_history(i)));
     end
     title('marginal p_b(s) over learning');
@@ -227,43 +265,58 @@ if args.debug_plot
 end
 %% (Debugging) visualize generative model stuff
 if args.debug_plot
-    mean_s_given_x = sum(marginal_s_values(:) .* s_given_x_table);
-    var_s_given_x = sum((marginal_s_values(:) - mean_s_given_x).^2 .* s_given_x_table);
+    if any(strcmpi(args.expt, {'rot-shift', 'rot-covariance'}))
+        circular_average = sum((cos(pi*marginal_s_values(:)) + 1i*sin(pi*marginal_s_values(:))) .* s_given_x_table);
+        mean_s_given_x = angle(circular_average)/pi;
+        var_s_given_x = 1-abs(circular_average).^2;
+    else
+        mean_s_given_x = sum(marginal_s_values(:) .* s_given_x_table);
+        var_s_given_x = sum((marginal_s_values(:) - mean_s_given_x).^2 .* s_given_x_table);
+    end
     figure();
     subplot(1,2,1);
     contourf(xx,yy,reshape(mean_s_given_x,size(xx)),20);
-    axis square;
+    axis square; colorbar();
     title('mean of s|x');
     subplot(1,2,2);
     contourf(xx,yy,reshape(var_s_given_x,size(xx)),20);
-    axis square;
+    axis square; colorbar();
     title('variance of s|x');
 end
 
-%% (Debugging) mutual information plots
+%% (Debugging) mutual information and calibration plots
 if args.debug_plot
-    for i=length(log_priors_history):-1:1
-        prior_entropy(i) = discrete_entropy(log_priors_history{i});
+    for i=length(priors_history):-1:1
+        log_pri = log(priors_history{i});
+        prior_entropy(i) = discrete_entropy(log_pri);
         s_values = linspace(-3, 3, args.variance_samples);
-        log_pri = log_priors_history{i};
+        avg_post = zeros(size(xx));
         parfor j=1:args.variance_samples
-            rand_log_post = log_pri + logmvnpdf(xx, yy, rand_mean_fn(s_values(j), 0), rand_cov_fn(s_values(j), 0));
-            posterior_entropies(j) = discrete_entropy(rand_log_post);
+            rand_log_post = log_pri + logmvnpdf(xx, yy, rand_mean_fn(s_values(j), 1), rand_cov_fn(s_values(j), 1));
+            avg_post = avg_post + log2prob(rand_log_post);
+            rand_posterior_entropies(j) = discrete_entropy(rand_log_post);
+            noiseless_log_post = log_pri + logmvnpdf(xx, yy, rand_mean_fn(s_values(j), 0), rand_cov_fn(s_values(j), 0));
+            noiseless_posterior_entropies(j) = discrete_entropy(noiseless_log_post);
         end
-        avg_posterior_entropy(i) = mean(posterior_entropies);
-        mcse_posterior_entropy(i) = std(posterior_entropies) / sqrt(args.variance_samples);
+        calibration(i) = tvd(avg_post, priors_history{i});
+        avg_posterior_entropy(i,1)  = mean(rand_posterior_entropies);
+        mcse_posterior_entropy(i,1) = std(rand_posterior_entropies) / sqrt(args.variance_samples);
+        avg_posterior_entropy(i,2)  = mean(noiseless_posterior_entropies);
+        mcse_posterior_entropy(i,2) = std(noiseless_posterior_entropies) / sqrt(args.variance_samples);
     end
-    mutual_information = prior_entropy - avg_posterior_entropy;
-    figure;
-    errorbar(itr_history, mutual_information, mcse_posterior_entropy, 'marker', '.');
+    mutual_information = prior_entropy(:) - avg_posterior_entropy;
+    figure; hold on;
+    plot(itr_history, calibration, 'marker', '.', 'displayname', 'TVD(avg post||pri)');
+    errorbar(itr_history, mutual_information(:,1), mcse_posterior_entropy(:,1), 'marker', '.', 'displayname', 'MI (w/ noise)');
+    errorbar(itr_history, mutual_information(:,2), mcse_posterior_entropy(:,2), 'marker', '.', 'displayname', 'MI (noiseless)');
     xlabel('iteration');
-    ylabel('Mutual Information');
+    legend();
 end
 
 %% (Debugging) PCA plots
 if args.debug_plot
     n_pc = 6;
-    for i=1:length(log_priors_history)
+    for i=1:length(priors_history)
         if isempty(mass_covariance{i}), continue; end
         [~, s, v] = svd(mass_covariance{i});
         s = diag(s);
@@ -312,7 +365,7 @@ for i=1:args.n_plot_s
 end
 if strcmpi(args.expt, 'SHIFT')
     % Underlay the cubic mean function
-    uistack(plot(ax, xvalues, (xvalues(:)+xvalues(:).^3)/10, '-k'), 'bottom');
+    uistack(plot(marginal_s_values, (marginal_s_values(:)+marginal_s_values(:).^3)/10, '-k'), 'bottom');
 end
 xlim(ax, [min(xvalues) max(xvalues)]);
 ylim(ax, [min(xvalues) max(xvalues)]);
@@ -326,7 +379,7 @@ for i=1:args.n_contours
 end
 if strcmpi(args.expt, 'SHIFT')
     % Underlay the cubic mean function
-    uistack(plot(ax, xvalues, (xvalues(:)+xvalues(:).^3)/10, '-k'), 'bottom');
+    uistack(plot(marginal_s_values, (marginal_s_values(:)+marginal_s_values(:).^3)/10, '-k'), 'bottom');
 end
 xlim(ax, [min(xvalues) max(xvalues)]);
 ylim(ax, [min(xvalues) max(xvalues)]);
@@ -334,19 +387,19 @@ axis square;
 title('Likelihoods at s=0');
 
 ax = subplot(2,3,3); hold on;
-contourf(ax, xx, yy, prior_symmetry(log2prob(log_priors_history{end})), 12);
+contourf(ax, xx, yy, prior_symmetry(log2prob(priors_history{end})), 12);
 axis square;
 title('Learned prior');
 
 ax = subplot(2,3,4); hold on;
 for i=1:args.n_contours
     noisy_log_like = logmvnpdf(xx, yy, rand_mean_fn(0, 1), rand_cov_fn(0, 1));
-    noisy_log_post = log_priors_history{end} + noisy_log_like;
+    noisy_log_post = priors_history{end} + noisy_log_like;
     mycontour(ax, xx, yy, log2prob(noisy_log_post), 1, [.8 0 .8], [.2 0 .2], .2);
 end
 if strcmpi(args.expt, 'SHIFT')
     % Underlay the cubic mean function
-    uistack(plot(ax, xvalues, (xvalues(:)+xvalues(:).^3)/10, '-k'), 'bottom');
+    uistack(plot(marginal_s_values, (marginal_s_values(:)+marginal_s_values(:).^3)/10, '-k'), 'bottom');
 end
 xlim(ax, [min(xvalues) max(xvalues)]);
 ylim(ax, [min(xvalues) max(xvalues)]);
@@ -381,9 +434,25 @@ end
 
 %% Helpers
 
-function avg_dp_ds = estimate_dp_ds(xx, yy,  lh_fn_mu, lh_fn_cov, log_prior, n_samples)
+function p_s_given_x = likelihood(x, y, lh_fn_mu, lh_fn_cov, s_values, n_noise)
+p_s_given_x = zeros(numel(s_values), numel(x));
+for j=1:n_noise
+    tmp_table = zeros(size(p_s_given_x));
+    parfor i=1:numel(s_values)
+        this_unnorm_loglike = logmvnpdf(x, y, lh_fn_mu(s_values(i),1), lh_fn_cov(s_values(i),1));
+        tmp_table(i,:) = exp(this_unnorm_loglike(:));
+    end
+    % Normalize across s dimension for this set of noise draws, separately for each xy value
+    tmp_table = tmp_table ./ sum(tmp_table, 1);
+    % Average over noise draws in the full s|x table
+    p_s_given_x = p_s_given_x + tmp_table / n_noise;
+end
+end
+
+function avg_dp_ds = estimate_dp_ds(xx, yy,  lh_fn_mu, lh_fn_cov, prior, n_samples)
 avg_dp_ds = zeros(size(xx));
 ds = .01;
+log_prior = log(prior);
 for i=1:n_samples
     % Evaluate +∆s and -∆s with the same seed to reduce variance
     state = rng();
@@ -395,34 +464,15 @@ for i=1:n_samples
 end
 end
 
-function [new_log_prior, new_prior] = learning_step(xx, yy, lh_fn_mu, lh_fn_cov, log_prior, svalues, lambda, lr)
-%Once per s, generate a new random (mu,cov) pair for the likelihood
-lh_mu = arrayfun(@(s) lh_fn_mu(s,1), svalues, 'uniformoutput', false);
-lh_cov = arrayfun(@(s) lh_fn_cov(s,1), svalues, 'uniformoutput', false);
-
-log_uniform = -numel(xx) * ones(size(xx));
-
-avg_posterior = zeros(size(xx));
-avg_log_delta = zeros(size(xx));
-for i=1:length(svalues)
-    % Compute log likelihood function across all xy grid
-    log_lh = logmvnpdf(xx, yy, lh_mu{i}, lh_cov{i});
-    
-    % Accumulate the average of (log posterior - log prior), which is just the log likelihood
-    avg_log_delta = avg_log_delta + log_lh / length(svalues);
-    
-    % Accumulate the average posterior evaluated on the grid.
-    avg_posterior = avg_posterior + log2prob(log_lh + log_prior) / length(svalues);
-end
-
-% Update rule: (log) prior is moved *towards* the (log) average posterior, but *pulled back* to the
-% original uniform prior
-avg_posterior = avg_posterior / sum(avg_posterior(:));
-
-update_direction = (1-lambda)*(log(avg_posterior)-log_prior) + lambda*(log_uniform-log_prior);
-new_log_prior = log_prior + lr * update_direction;
-new_log_prior = new_log_prior - logsumexp(new_log_prior);
-new_prior = exp(new_log_prior);
+function [error, new_prior] = learning_step(p_s_given_x, prior_x, true_marginal_s, lr)
+marginal_s = p_s_given_x * prior_x(:);
+error = tvd(marginal_s, true_marginal_s);
+% Chain rule to get dError/d
+derror_dmarg = marginal_s(:) - true_marginal_s(:);
+derror_dprior = derror_dmarg(:)' * p_s_given_x;
+% Take a gradient descent step
+new_prior = max(prior_x - lr * reshape(derror_dprior, size(prior_x)), 0);
+new_prior = new_prior / sum(new_prior(:));
 end
 
 function p = log2prob(logp)
@@ -431,10 +481,18 @@ p = reshape(p / sum(p), size(logp));
 end
 
 function log_probs = logmvnpdf(xx, yy, mu, sigma)
-%Evaluate the 2D log probability of (x,y) for the 2D gaussian with mean mu and covariance sigma
+%Evaluate the 2D log probability of (x,y) for the 2D gaussian with mean mu and covariance sigma...
+%but clip values beyond 3 sigma to avoid visual artifacts of light-tailedness in a discrete space
 xy = [xx(:) yy(:)];
-log_probs = -1/2 * sum((xy - mu)' .* (sigma \ (xy - mu)'), 1) -1/2 * logdet(sigma);
+R = cholcov(sigma);
+z = (xy-mu)/R;
+logSqrtDetSigma = sum(log(diag(R)));
+log_probs = -1/2*sum(z.*z, 2) - logSqrtDetSigma;
 log_probs = reshape(log_probs, size(xx));
+% Enforce a minimum value equal to whatever value we get above for z=[3,0] or ||z||=3*3, since this
+% will be the 3-sigma value
+min_value = -1/2*(3*3)-logSqrtDetSigma;
+log_probs = max(log_probs, min_value);
 end
 
 function C = randcov(k)
@@ -443,9 +501,9 @@ L = randn(2,k);
 C = L*L';
 end
 
-function d = tvd(logp, logq)
+function d = tvd(p, q)
 % Total variational distance
-d = sum(abs(log2prob(logp(:)) - log2prob(logq(:))));
+d = sum(abs(p(:)/sum(p(:)) - q(:)/sum(q(:))));
 end
 
 function h = mycontour(ax, xx, yy, zz, n, patchcolor, linecolor, alpha)
@@ -484,17 +542,7 @@ plogp(isnan(plogp) | isinf(plogp) | plogp<0) = 0;
 h = sum(plogp);
 end
 
-function p_s_given_x = likelihood(x, y, lh_fn_mu, lh_fn_cov, s_values, n_noise)
-p_s_given_x = zeros(numel(s_values), numel(x));
-for i=1:numel(s_values)
-    avg_s_x = zeros(size(x));
-    for j=1:n_noise
-        this_unnorm_loglike = logmvnpdf(x, y, lh_fn_mu(s_values(i),1), lh_fn_cov(s_values(i),1));
-        avg_s_x = avg_s_x + exp(this_unnorm_loglike);
-    end
-    % Populate this row (this value of s) in the joint probability table
-    p_s_given_x(i, :) = avg_s_x(:);
-end
-% Normalize each column so that p(s|x) sums to 1 for each x
-p_s_given_x = p_s_given_x ./ sum(p_s_given_x, 1);
+function r = rot(angle)
+c = cos(angle); s = sin(angle);
+r = [c -s; s c];
 end
