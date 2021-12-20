@@ -1,4 +1,4 @@
-function fig = Fig4_gen_xi(varargin)
+function fig = Fig4(varargin)
 p = inputParser;
 p.addRequired('expt');  % experiment - one of 'shift' or 'covariance'
 p.addParameter('eps', 5e-4); % stop learning when TVD(prior_t,prior_t-1) < eps
@@ -131,7 +131,7 @@ end
 
 %% Run analysis or load from file if available
 for r=1:args.runs
-    save_file = fullfile(args.savedir, sprintf('Fig4_gen_xi_%s_%.3f_%.3f_%.2f_%02d.mat', lower(args.expt), args.lambda_uniform, args.lambda_entropy, args.sigma_i, r));
+    save_file = fullfile(args.savedir, sprintf('Fig4_%s_%.3f_%.3f_%.2f_%02d.mat', lower(args.expt), args.lambda_uniform, args.lambda_entropy, args.sigma_i, r));
     if exist(save_file, 'file')
         data = load(save_file);
         log_priors_history = data.log_priors_history;
@@ -358,7 +358,7 @@ switch lower(args.varplot)
     case 'lines'
         yyaxis left;
         for r=1:args.runs
-            save_file = fullfile(args.savedir, sprintf('Fig4_gen_xi_%s_%.3f_%.3f_%.2f_%02d.mat', ...
+            save_file = fullfile(args.savedir, sprintf('Fig4_%s_%.3f_%.3f_%.2f_%02d.mat', ...
                 lower(args.expt), args.lambda_uniform, args.lambda_entropy, args.sigma_i, r));
             data = load(save_file, 'total_variance', 'var_along_dpds', 'itr_history');
             plot(ax, data.itr_history, data.var_along_dpds, 'displayname', 'var along dp/ds', ...
@@ -370,7 +370,7 @@ switch lower(args.varplot)
         ylabel('total variance');
         yyaxis right;
         for r=1:args.runs
-            save_file = fullfile(args.savedir, sprintf('Fig4_gen_xi_%s_%.3f_%.3f_%.2f_%02d.mat', ...
+            save_file = fullfile(args.savedir, sprintf('Fig4_%s_%.3f_%.3f_%.2f_%02d.mat', ...
                 lower(args.expt), args.lambda_uniform, args.lambda_entropy, args.sigma_i, r));
             data = load(save_file, 'total_variance', 'var_along_dpds', 'itr_history');
             plot(ax, data.itr_history, data.var_along_dpds ./ data.total_variance, 'displayname', 'frac var along dp/ds', ...
@@ -382,7 +382,7 @@ switch lower(args.varplot)
         legend('location', 'best')
     case 'bar'
         for r=args.runs:-1:1
-            save_file = fullfile(args.savedir, sprintf('Fig4_gen_xi_%s_%.3f_%.3f_%.2f_%02d.mat', ...
+            save_file = fullfile(args.savedir, sprintf('Fig4_%s_%.3f_%.3f_%.2f_%02d.mat', ...
                 lower(args.expt), args.lambda_uniform, args.lambda_entropy, args.sigma_i, r));
             data = load(save_file, 'total_variance', 'var_along_dpds', 'itr_history');
             all_frac_var_along(:,r) = data.var_along_dpds ./ data.total_variance;
