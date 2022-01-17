@@ -45,15 +45,16 @@ switch upper(args.expt)
     case 'COVARIANCE'
         % Parameterize how the mean of the likelihood depends on s (constant)
         mean_fn = @(s) [0 0];
-        % Parameterize how the covariance of the likelihood depends on s (transition from + to - corr)
-        max_correlation = .9;
-        covplus = 1.5*[1 max_correlation; max_correlation 1];
+        covplus = [1 1; 1 1];
         covzero = 0.5*eye(2);
-        covminus = 1.5*[1 -max_correlation; -max_correlation 1];
-        cov_fn = @(s) covzero + (s>0)*(covplus-covzero)*tanh(s) + (s<0)*(covminus-covzero)*abs(tanh(s));
+        covminus = [1 -1; -1 1];
+        cov_fn = @(s) covzero + (s>0)*covplus*tanh(s) + (s<0)*covminus*abs(tanh(s));
         
         prior_symmetry = @(p) (p + rot90(p,1) + rot90(p,2) + rot90(p,3))/4;
         dp_ds_symmetry = @(dpds) (dpds - rot90(dpds,1) + rot90(dpds,2) - rot90(dpds,3))/4;
+        
+        s = eigs(cov_fn(+3));
+        fprintf('[DEBUG] Narrowest E|s stdev is %f; E|x is %f\n', sqrt(min(s)), args.sigma_i);
         
         % Create true p(s) as a uniform distribution on [-3,3]
         marginal.s_values = linspace(-3, 3, args.samples_per_iter);
